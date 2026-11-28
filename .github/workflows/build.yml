@@ -241,6 +241,11 @@ jobs:
             ./scripts/config --file out/.config --enable TOUCHSCREEN_XIAOMI_TOUCHFEATURE_SENSOR || true
             ./scripts/config --file out/.config --enable INPUT_TOUCHSCREEN || true
           fi
+          # sde_plane.c 缺 <uapi/drm/msm_drm.h>（DRM_ROTATE_*/DRM_REFLECT_* 定义在此）
+          if [ -f drivers/gpu/drm/msm/sde/sde_plane.c ] && ! grep -q "uapi/drm/msm_drm.h" drivers/gpu/drm/msm/sde/sde_plane.c; then
+            sed -i '/#include <uapi\/drm\/sde_drm.h>/i #include <uapi/drm/msm_drm.h>' drivers/gpu/drm/msm/sde/sde_plane.c
+            echo "[+] 已为 sde_plane.c 补 msm_drm.h"
+          fi
           # sde_rsc.h 缺 get_sde_rsc_primary_crtc 声明（原作者用 GCC4.9 靠隐式声明），这里补上
           if [ -f drivers/gpu/drm/msm/sde/sde_crtc.c ] && ! grep -q "extern int get_sde_rsc_primary_crtc" drivers/gpu/drm/msm/sde/sde_crtc.c; then
             sed -i '/#include <linux\/sde_rsc.h>/a extern int get_sde_rsc_primary_crtc(int rsc_index);' drivers/gpu/drm/msm/sde/sde_crtc.c
