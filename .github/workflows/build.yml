@@ -182,6 +182,11 @@ jobs:
           curl -fLSs --retry 3 -m 90 -o include/linux/input/synaptics_dsx.h "$BASE/include/linux/input/synaptics_dsx.h" \
             || { echo "[FATAL] 覆盖 synaptics_dsx.h 失败"; exit 1; }
           echo "[+] 已覆盖 include/linux/input/synaptics_dsx.h"
+          # FORCE 触摸驱动依赖的 DRM blank notifier 头
+          mkdir -p include/drm
+          curl -fLSs --retry 3 -m 60 -o include/drm/drm_notifier.h "$BASE/include/drm/drm_notifier.h" \
+            || { echo "[FATAL] 下载 drm_notifier.h 失败"; exit 1; }
+          echo "[+] drm_notifier.h 已加入"
           # hwinfo（FORCE 触摸驱动依赖 linux/hwinfo.h）
           curl -fLSs --retry 3 -m 60 -o include/linux/hwinfo.h "$BASE/include/linux/hwinfo.h" \
             || { echo "[FATAL] 下载 hwinfo.h 失败"; exit 1; }
