@@ -108,6 +108,7 @@ jobs:
           awk '/^VERSION|^PATCHLEVEL|^SUBLEVEL/{printf "%s=%s ", $1, $3} END{print ""}' Makefile
 
       - name: 集成 SukiSU Nova
+        if: ${{ inputs.enable_ksu }}
         run: |
           set -euo pipefail
           cd kernel
