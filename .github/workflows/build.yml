@@ -214,6 +214,10 @@ jobs:
             ./scripts/config --file out/.config --enable TOUCHSCREEN_XIAOMI_TOUCHFEATURE_SENSOR || true
             ./scripts/config --file out/.config --enable INPUT_TOUCHSCREEN || true
           fi
+          # 显示/SDE RSC 依赖链（缺失会导致 sde_crtc.c 隐式声明编译错误）
+          for k in DRM DRM_MSM DRM_MSM_SDE DRM_SDE_RSC DRM_SDE_WB; do
+            ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
+          done
           if [ -n "${{ inputs.localversion }}" ]; then
             ./scripts/config --file out/.config --set-str LOCALVERSION "${{ inputs.localversion }}"
             echo "[+] LOCALVERSION=${{ inputs.localversion }}"
