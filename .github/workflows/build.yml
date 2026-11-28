@@ -293,7 +293,7 @@ jobs:
             ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
           done
           # 关掉旧的 v2.6 驱动，避免与 FORCE 版抢同一个 struct 定义
-          for k in TOUCHSCREEN_SYNAPTICS_DSX_v26 TOUCHSCREEN_SYNAPTICS_DSX_I2C_v26 TOUCHSCREEN_SYNAPTICS_DSX \; do
+          for k in TOUCHSCREEN_SYNAPTICS_DSX_v26 TOUCHSCREEN_SYNAPTICS_DSX_I2C_v26 TOUCHSCREEN_SYNAPTICS_DSX; do
             ./scripts/config --file out/.config --disable "$k" 2>/dev/null || true
           done
           # MIUI 12 依赖老式 wakelock
