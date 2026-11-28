@@ -221,6 +221,11 @@ jobs:
             ./scripts/config --file out/.config --enable TOUCHSCREEN_XIAOMI_TOUCHFEATURE_SENSOR || true
             ./scripts/config --file out/.config --enable INPUT_TOUCHSCREEN || true
           fi
+          # sde_rsc.h 缺 get_sde_rsc_primary_crtc 声明（原作者用 GCC4.9 靠隐式声明），这里补上
+          if [ -f drivers/gpu/drm/msm/sde/sde_crtc.c ] && ! grep -q "extern int get_sde_rsc_primary_crtc" drivers/gpu/drm/msm/sde/sde_crtc.c; then
+            sed -i '/#include <linux\/sde_rsc.h>/a extern int get_sde_rsc_primary_crtc(int rsc_index);' drivers/gpu/drm/msm/sde/sde_crtc.c
+            echo "[+] 已补 get_sde_rsc_primary_crtc 声明"
+          fi
           # 显示/SDE RSC 依赖链（缺失会导致 sde_crtc.c 隐式声明编译错误）
           for k in DRM DRM_MSM DRM_MSM_SDE DRM_SDE_RSC DRM_SDE_WB; do
             ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
@@ -230,6 +235,8 @@ jobs:
             echo "[+] LOCALVERSION=${{ inputs.localversion }}"
           fi
           make O=out ARCH=arm64 olddefconfig
+          echo '--- DRM 配置 ---'
+          grep -E "^CONFIG_DRM(_MSM|_SDE_RSC)?=|^# CONFIG_DRM_SDE_RSC" out/.config || true
           echo '--- 关键配置 ---'
           grep -E '^CONFIG_(KSU|KALLSYMS|SECURITY_SELINUX|MODULES)' out/.config || true
 
@@ -248,15 +255,15 @@ jobs:
           # 先只编 Image.gz，避免 modules/dtbs 失败把内核目标带崩
           make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
             LD="${CROSS}ld" ld-name=bfd \
-            HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" \
             -j"$(nproc --all)" Image.gz > /tmp/build.log 2>&1
           RC=$?
           # dtb 与模块单独构建，失败只记录不致命
           make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
-            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" \
             -j"$(nproc --all)" dtbs >> /tmp/build.log 2>&1 || true
           make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
-            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" KCFLAGS="-Wno-error=implicit-function-declaration" \
             -j"$(nproc --all)" modules >> /tmp/build.log 2>&1 || true
           # modpost 对少数无关 .ko 报错不算失败，只要 Image.gz 产出即可
           if [ -f out/arch/arm64/boot/Image.gz ]; then
