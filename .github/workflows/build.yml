@@ -27,6 +27,10 @@ on:
         description: 'CONFIG_LOCALVERSION（对齐原厂填 -perf-g83532fd）'
         required: false
         default: ''
+      enable_wakelock:
+        description: '确保老式 CONFIG_WAKELOCK 可用（MIUI 12 电源键唤醒依赖它）'
+        type: boolean
+        default: true
       enable_xiaomi_touch:
         description: '移植小米 xiaomi_touch 触摸框架（MIUI 触摸 HAL 依赖它）'
         type: boolean
@@ -149,6 +153,22 @@ jobs:
           grep -n 'xiaomi' drivers/input/touchscreen/Kconfig drivers/input/touchscreen/Makefile
           echo "[+] xiaomi_touch 已加入源码树"
 
+      - name: 注册老式 WAKELOCK（如源码有 wakelock.c 但无 Kconfig 项）
+        if: ${{ inputs.enable_wakelock }}
+        run: |
+          set -euo pipefail
+          cd kernel
+          if [ -f kernel/power/wakelock.c ]; then
+            if ! grep -q '^config WAKELOCK$' kernel/power/Kconfig; then
+              printf '\nconfig WAKELOCK\n\tbool "Android wakelocks"\n\tdepends on !PM_WAKELOCKS\n\tdefault y\n\thelp\n\t  Android wakelock support (/sys/power/wake_lock).\n' >> kernel/power/Kconfig
+              echo "[+] Kconfig 已加入 WAKELOCK"
+            fi
+            grep -q 'wakelock.o' kernel/power/Makefile || echo 'obj-$(CONFIG_WAKELOCK) += wakelock.o' >> kernel/power/Makefile
+            echo "[+] Makefile 已注册 wakelock.o"
+          else
+            echo "[INFO] 本基线无 kernel/power/wakelock.c，跳过"
+          fi
+
       - name: 生成配置并注入 KSU 选项
         run: |
           set -euo pipefail
@@ -226,6 +246,9 @@ jobs:
             sed -i '/#include <linux\/sde_rsc.h>/a extern int get_sde_rsc_primary_crtc(int rsc_index);' drivers/gpu/drm/msm/sde/sde_crtc.c
             echo "[+] 已补 get_sde_rsc_primary_crtc 声明"
           fi
+          # MIUI 12 依赖老式 wakelock
+          ./scripts/config --file out/.config --disable PM_WAKELOCKS 2>/dev/null || true
+          ./scripts/config --file out/.config --enable WAKELOCK 2>/dev/null || true
           # 显示/SDE RSC 依赖链（缺失会导致 sde_crtc.c 隐式声明编译错误）
           for k in DRM DRM_MSM DRM_MSM_SDE DRM_SDE_RSC DRM_SDE_WB; do
             ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
