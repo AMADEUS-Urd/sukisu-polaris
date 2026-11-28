@@ -27,6 +27,10 @@ on:
         description: 'CONFIG_LOCALVERSION（对齐原厂填 -perf-g83532fd）'
         required: false
         default: ''
+      enable_relaxed_modules:
+        description: '放宽模块加载校验（允许 vendor 异版本 .ko，恢复 WiFi/相机）'
+        type: boolean
+        default: true
       enable_miui_touch_force:
         description: '移植 dipper-q-oss 的 FORCE 版触摸驱动（MIUI HAL 依赖它 + SECURE_TOUCH）'
         type: boolean
@@ -219,6 +223,17 @@ jobs:
             echo "[INFO] 本基线无 kernel/power/wakelock.c，跳过"
           fi
 
+
+      - name: 放宽模块版本校验（vendor .ko 可加载）
+        if: ${{ inputs.enable_relaxed_modules }}
+        run: |
+          set -euo pipefail
+          cd kernel
+          python3 ../repo/patches/relax_modules.py
+          git add -A >/dev/null 2>&1 || true
+          git -c user.name=ci -c user.email=ci@ci commit -q -m "relax module checks" >/dev/null 2>&1 || true
+          echo "[+] 模块校验已放宽，工作树已提交（LOCALVERSION 干净）"
+
       - name: 生成配置并注入 KSU 选项
         run: |
           set -euo pipefail
@@ -317,6 +332,8 @@ jobs:
           for k in TOUCHSCREEN_SYNAPTICS_DSX_v26 TOUCHSCREEN_SYNAPTICS_DSX_I2C_v26 TOUCHSCREEN_SYNAPTICS_DSX; do
             ./scripts/config --file out/.config --disable "$k" 2>/dev/null || true
           done
+          ./scripts/config --file out/.config --enable MODULE_FORCE_LOAD 2>/dev/null || true
+          ./scripts/config --file out/.config --enable MODULES 2>/dev/null || true
           # MIUI 12 依赖老式 wakelock
           ./scripts/config --file out/.config --disable PM_WAKELOCKS 2>/dev/null || true
           ./scripts/config --file out/.config --enable WAKELOCK 2>/dev/null || true
