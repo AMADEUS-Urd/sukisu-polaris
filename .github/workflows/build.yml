@@ -27,6 +27,10 @@ on:
         description: 'CONFIG_LOCALVERSION（对齐原厂填 -perf-g83532fd）'
         required: false
         default: ''
+      enable_miui_touch_force:
+        description: '移植 dipper-q-oss 的 FORCE 版触摸驱动（MIUI HAL 依赖它 + SECURE_TOUCH）'
+        type: boolean
+        default: true
       enable_wakelock:
         description: '确保老式 CONFIG_WAKELOCK 可用（MIUI 12 电源键唤醒依赖它）'
         type: boolean
@@ -153,6 +157,30 @@ jobs:
           grep -n 'xiaomi' drivers/input/touchscreen/Kconfig drivers/input/touchscreen/Makefile
           echo "[+] xiaomi_touch 已加入源码树"
 
+      - name: 移植 FORCE 版触摸驱动（dipper-q-oss）
+        if: ${{ inputs.enable_miui_touch_force }}
+        run: |
+          set -euo pipefail
+          cd kernel
+          BASE=https://raw.githubusercontent.com/MiCode/Xiaomi_Kernel_OpenSource/dipper-q-oss
+          D=drivers/input/touchscreen/synaptics_dsx_force
+          mkdir -p "$D"
+          for f in Kconfig Makefile synaptics_dsx_active_pen.c synaptics_dsx_core.c synaptics_dsx_core.h \
+                   synaptics_dsx_fw_update.c synaptics_dsx_gesture.c synaptics_dsx_i2c.c \
+                   synaptics_dsx_proximity.c synaptics_dsx_rmi_dev.c synaptics_dsx_rmi_hid_i2c.c \
+                   synaptics_dsx_spi.c synaptics_dsx_test_reporting.c synaptics_dsx_video.c; do
+            curl -fLSs --retry 3 -m 120 -o "$D/$f" "$BASE/$D/$f" || { echo "[FATAL] 下载 $f 失败"; exit 1; }
+          done
+          ls "$D" | wc -l
+          grep -q 'synaptics_dsx_force/Kconfig' drivers/input/touchscreen/Kconfig || \
+            sed -i '1i source "drivers/input/touchscreen/synaptics_dsx_force/Kconfig"' drivers/input/touchscreen/Kconfig
+          grep -q 'synaptics_dsx_force/' drivers/input/touchscreen/Makefile || \
+            printf '\nobj-y += synaptics_dsx_force/\n' >> drivers/input/touchscreen/Makefile
+          if [ ! -f include/linux/earlysuspend.h ]; then
+            curl -fLSs -m 60 -o include/linux/earlysuspend.h "$BASE/include/linux/earlysuspend.h" || echo "[WARN] earlysuspend.h 下载失败"
+          fi
+          echo "[+] FORCE 触摸驱动已就位"
+
       - name: 注册老式 WAKELOCK（如源码有 wakelock.c 但无 Kconfig 项）
         if: ${{ inputs.enable_wakelock }}
         run: |
@@ -251,6 +279,13 @@ jobs:
             sed -i '/#include <linux\/sde_rsc.h>/a extern int get_sde_rsc_primary_crtc(int rsc_index);' drivers/gpu/drm/msm/sde/sde_crtc.c
             echo "[+] 已补 get_sde_rsc_primary_crtc 声明"
           fi
+          # FORCE 版触摸 + SECURE_TOUCH
+          for k in TOUCHSCREEN_SYNAPTICS_DSX_FORCE TOUCHSCREEN_SYNAPTICS_DSX_I2C_FORCE \
+                   TOUCHSCREEN_SYNAPTICS_DSX_CORE_FORCE TOUCHSCREEN_SYNAPTICS_DSX_RMI_DEV_FORCE \
+                   TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_FORCE TOUCHSCREEN_SYNAPTICS_DSX_PROXIMITY_FORCE \
+                   TOUCHSCREEN_SYNAPTICS_DSX_GESTURE_FORCE SECURE_TOUCH LAST_TOUCH_EVENTS; do
+            ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
+          done
           # MIUI 12 依赖老式 wakelock
           ./scripts/config --file out/.config --disable PM_WAKELOCKS 2>/dev/null || true
           ./scripts/config --file out/.config --enable WAKELOCK 2>/dev/null || true
