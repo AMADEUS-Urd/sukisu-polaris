@@ -1,0 +1,9 @@
+work/
+out/
+*.tar.gz
+*.zip
+Image
+Image.gz
+boot_sukisu.img
+
+__pycache__/
