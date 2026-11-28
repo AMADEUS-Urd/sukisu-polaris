@@ -182,39 +182,8 @@ jobs:
           curl -fLSs --retry 3 -m 90 -o include/linux/input/synaptics_dsx.h "$BASE/include/linux/input/synaptics_dsx.h" \
             || { echo "[FATAL] 覆盖 synaptics_dsx.h 失败"; exit 1; }
           echo "[+] 已覆盖 include/linux/input/synaptics_dsx.h"
-          # 补 drm blank notifier 的实现（LA.UM.8.3 的显示驱动没有这套 MIUI 通知链）
-          cat > drivers/gpu/drm/msm/msm_drm_notifier.c <<'KEOF'
-#include <linux/notifier.h>
-#include <linux/export.h>
-#include <linux/types.h>
-#include <drm/drm_notifier.h>
-
-static BLOCKING_NOTIFIER_HEAD(drm_notifier_list);
-
-int drm_register_client(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_register(&drm_notifier_list, nb);
-}
-EXPORT_SYMBOL(drm_register_client);
-
-int drm_unregister_client(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_unregister(&drm_notifier_list, nb);
-}
-EXPORT_SYMBOL(drm_unregister_client);
-
-int drm_notifier_call_chain(unsigned long val, void *v)
-{
-	return blocking_notifier_call_chain(&drm_notifier_list, val, v);
-}
-EXPORT_SYMBOL(drm_notifier_call_chain);
-
-void report_esd_panel_dead(void) { }
-EXPORT_SYMBOL(report_esd_panel_dead);
-
-void set_skip_panel_dead(bool on) { }
-EXPORT_SYMBOL(set_skip_panel_dead);
-KEOF
+          # drm blank notifier 实现（源文件在仓库 drm_notifier/ 下）
+          cp -f ../repo/drm_notifier/msm_drm_notifier.c drivers/gpu/drm/msm/msm_drm_notifier.c
           grep -q 'msm_drm_notifier.o' drivers/gpu/drm/msm/Makefile || echo 'obj-y += msm_drm_notifier.o' >> drivers/gpu/drm/msm/Makefile
           echo "[+] msm_drm_notifier 已加入"
           # FORCE 触摸驱动依赖的 DRM blank notifier 头
