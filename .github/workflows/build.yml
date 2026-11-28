@@ -224,15 +224,15 @@ jobs:
           fi
 
 
-      - name: 放宽模块版本校验（vendor .ko 可加载）
+      - name: 精确对齐内核版本号（让 vendor .ko 的 vermagic 匹配）
         if: ${{ inputs.enable_relaxed_modules }}
         run: |
           set -euo pipefail
           cd kernel
-          python3 ../repo/patches/relax_modules.py
+          # 提交工作树，使 scripts/setlocalversion 不再追加 "-dirty"/"+"
           git add -A >/dev/null 2>&1 || true
-          git -c user.name=ci -c user.email=ci@ci commit -q -m "relax module checks" >/dev/null 2>&1 || true
-          echo "[+] 模块校验已放宽，工作树已提交（LOCALVERSION 干净）"
+          git -c user.name=ci -c user.email=ci@ci commit -q -m "build patches" >/dev/null 2>&1 || true
+          echo "[+] 工作树已提交，UTS_RELEASE 将等于 4.9.186-perf-g83532fd"
 
       - name: 生成配置并注入 KSU 选项
         run: |
