@@ -177,6 +177,11 @@ jobs:
             sed -i '1i source "drivers/input/touchscreen/synaptics_dsx_force/Kconfig"' drivers/input/touchscreen/Kconfig
           grep -q 'synaptics_dsx_force/' drivers/input/touchscreen/Makefile || \
             printf '\nobj-y += synaptics_dsx_force/\n' >> drivers/input/touchscreen/Makefile
+          # 覆盖公共头（struct synaptics_dsx_board_data 的 FORCE 版定义）
+          mkdir -p include/linux/input
+          curl -fLSs --retry 3 -m 90 -o include/linux/input/synaptics_dsx.h "$BASE/include/linux/input/synaptics_dsx.h" \
+            || { echo "[FATAL] 覆盖 synaptics_dsx.h 失败"; exit 1; }
+          echo "[+] 已覆盖 include/linux/input/synaptics_dsx.h"
           if [ ! -f include/linux/earlysuspend.h ]; then
             curl -fLSs -m 60 -o include/linux/earlysuspend.h "$BASE/include/linux/earlysuspend.h" || echo "[WARN] earlysuspend.h 下载失败"
           fi
@@ -286,6 +291,10 @@ jobs:
                    TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_FORCE TOUCHSCREEN_SYNAPTICS_DSX_PROXIMITY_FORCE \
                    TOUCHSCREEN_SYNAPTICS_DSX_GESTURE_FORCE SECURE_TOUCH LAST_TOUCH_EVENTS; do
             ./scripts/config --file out/.config --enable "$k" 2>/dev/null || true
+          done
+          # 关掉旧的 v2.6 驱动，避免与 FORCE 版抢同一个 struct 定义
+          for k in TOUCHSCREEN_SYNAPTICS_DSX_v26 TOUCHSCREEN_SYNAPTICS_DSX_I2C_v26 TOUCHSCREEN_SYNAPTICS_DSX \; do
+            ./scripts/config --file out/.config --disable "$k" 2>/dev/null || true
           done
           # MIUI 12 依赖老式 wakelock
           ./scripts/config --file out/.config --disable PM_WAKELOCKS 2>/dev/null || true
