@@ -154,6 +154,13 @@ jobs:
           set -euo pipefail
           cd kernel
           export ARCH=arm64
+          # 用源码自带 defconfig 时，补上 DRM_MSM（polaris_defconfig 里有 DRM_SDE_RSC 但缺这条依赖）
+          if [ "${{ inputs.config_source }}" = "defconfig" ] && [ -f "arch/arm64/configs/${{ inputs.defconfig }}" ]; then
+            for k in CONFIG_DRM_MSM=y CONFIG_DRM=y CONFIG_DRM_KMS_HELPER=y CONFIG_DRM_SDE_RSC=y; do
+              grep -q "^${k%%=*}=" "arch/arm64/configs/${{ inputs.defconfig }}" || echo "$k" >> "arch/arm64/configs/${{ inputs.defconfig }}"
+            done
+            echo "[+] 已补 DRM 依赖链到 defconfig"
+          fi
           if [ "${{ inputs.config_source }}" = "extracted" ]; then
             echo "[+] 使用从原厂 boot 提取的完整内核配置"
             mkdir -p out
