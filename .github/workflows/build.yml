@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+          sudo apt-get install -y -qq binutils-aarch64-linux-gnu gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
           GCCBIN=""
           for v in 9 10; do
             if sudo apt-get install -y -qq "gcc-${v}-aarch64-linux-gnu" >/dev/null 2>&1; then
@@ -239,16 +239,16 @@ jobs:
           echo "------------------"
           set +e
           # 先只编 Image.gz，避免 modules/dtbs 失败把内核目标带崩
-          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
             LD="${CROSS}ld" ld-name=bfd \
             HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
             -j"$(nproc --all)" Image.gz > /tmp/build.log 2>&1
           RC=$?
           # dtb 与模块单独构建，失败只记录不致命
-          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
             LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
             -j"$(nproc --all)" dtbs >> /tmp/build.log 2>&1 || true
-          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- CC="${CC_OVERRIDE}" \
             LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
             -j"$(nproc --all)" modules >> /tmp/build.log 2>&1 || true
           # modpost 对少数无关 .ko 报错不算失败，只要 Image.gz 产出即可
