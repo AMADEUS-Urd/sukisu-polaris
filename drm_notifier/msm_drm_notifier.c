@@ -29,3 +29,10 @@ EXPORT_SYMBOL(report_esd_panel_dead);
 
 void set_skip_panel_dead(bool on) { }
 EXPORT_SYMBOL(set_skip_panel_dead);
+
+/* MIUI 私有显示辅助 API 的空实现（触摸驱动调用，非必需功能） */
+void drm_dsi_ulps_enable(bool en) { }
+EXPORT_SYMBOL(drm_dsi_ulps_enable);
+
+void drm_panel_reset_skip_enable(bool en) { }
+EXPORT_SYMBOL(drm_panel_reset_skip_enable);
