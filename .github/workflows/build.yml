@@ -1,0 +1,296 @@
+name: build-sukisu-polaris
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: '内核源码仓库（owner/repo）'
+        required: true
+        default: 'unknownbaka/utopia_kernel_polaris'
+      kernel_branch:
+        description: '分支 / 标签'
+        required: true
+        default: 'main'
+      defconfig:
+        description: 'defconfig 名（MIUI 用 stock_defconfig，自定义 ROM 用 polaris_defconfig）'
+        required: true
+        default: 'stock_defconfig'
+      ksu_setup_arg:
+        description: 'SukiSU setup.sh 参数：builtin-new（4.9 推荐）/ main（LKM，需 kprobes）'
+        required: true
+        default: 'builtin-new'
+      config_source:
+        description: '配置来源：defconfig=源码自带 / extracted=原厂 boot 提取的完整配置'
+        required: true
+        default: 'defconfig'
+      localversion:
+        description: 'CONFIG_LOCALVERSION（对齐原厂填 -perf-g83532fd）'
+        required: false
+        default: ''
+      enable_xiaomi_touch:
+        description: '移植小米 xiaomi_touch 触摸框架（MIUI 触摸 HAL 依赖它）'
+        type: boolean
+        default: true
+      enable_ksu:
+        description: '启用 KernelSU（对照实验时关掉）'
+        type: boolean
+        default: true
+      enable_tamper:
+        description: '启用 CONFIG_KSU_TAMPER_SYSCALL_TABLE（4.9 推荐，跳过手动 hook）'
+        type: boolean
+        default: true
+      enable_susfs:
+        description: '启用 SUSFS'
+        type: boolean
+        default: false
+      enable_kpm:
+        description: '启用 KPM（需 KALLSYMS_ALL）'
+        type: boolean
+        default: false
+      repack_boot:
+        description: '若仓库根目录存在 boot.img，则同时重组出可刷 boot_sukisu.img'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: 安装依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison build-essential cpio flex libelf-dev \
+            libssl-dev liblz4-tool lzop zip unzip python3 zlib1g-dev rsync file
+
+      - name: 准备工具链（GCC 9 / 10，须满足内核要求的 GCC>=5.1）
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+          GCCBIN=""
+          for v in 9 10; do
+            if sudo apt-get install -y -qq "gcc-${v}-aarch64-linux-gnu" >/dev/null 2>&1; then
+              GCCBIN="aarch64-linux-gnu-gcc-${v}"
+              echo "[OK] 使用 GCC ${v}"
+              break
+            fi
+          done
+          if [ -z "$GCCBIN" ]; then
+            echo "[WARN] gcc-9/10 不可用，回退默认 gcc（版本偏新，老内核可能报错）"
+            sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+            GCCBIN="aarch64-linux-gnu-gcc"
+          fi
+          "$GCCBIN" --version | head -1
+          echo "CROSS=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          echo "CC_OVERRIDE=$GCCBIN" >> "$GITHUB_ENV"
+
+      - name: 克隆内核源码
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch -b "${{ inputs.kernel_branch }}" \
+            "https://github.com/${{ inputs.kernel_repo }}.git" kernel
+          cd kernel
+          echo "HEAD: $(git log -1 --oneline)"
+          awk '/^VERSION|^PATCHLEVEL|^SUBLEVEL/{printf "%s=%s ", $1, $3} END{print ""}' Makefile
+
+      - name: 集成 SukiSU Nova
+        run: |
+          set -euo pipefail
+          cd kernel
+          KSU_REF="${{ inputs.ksu_setup_arg }}"
+          BASE="https://git.zako.shirkneko.top:20004/shirkneko/SukiSU"
+
+          # 直接取分支归档：CI 上 git clone 只能拿到默认分支，checkout 会静默失败
+          curl -fLSs --retry 3 -m 600 -o /tmp/ksu.tar.gz "$BASE/archive/$KSU_REF.tar.gz"
+          rm -rf /tmp/ksu && mkdir -p /tmp/ksu
+          tar -xzf /tmp/ksu.tar.gz -C /tmp/ksu
+          SRC=$(find /tmp/ksu -mindepth 1 -maxdepth 1 -type d | head -1)
+          test -n "$SRC" || { echo "[FATAL] 归档解压后找不到目录"; exit 1; }
+          test -f "$SRC/kernel/Kconfig" || { echo "[FATAL] $SRC/kernel/Kconfig 不存在"; ls -l "$SRC"; exit 1; }
+          echo "[+] SukiSU 源: $SRC ($KSU_REF)"
+
+          rm -rf drivers/kernelsu
+          cp -a "$SRC/kernel" drivers/kernelsu
+
+          # Makefile / Kconfig 只保留一条入口，放顶层避免 endmenu 位置问题
+          sed -i '\#kernelsu#d' drivers/Makefile
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          sed -i '\#drivers/kernelsu/Kconfig#d' drivers/Kconfig
+          printf '\nsource "drivers/kernelsu/Kconfig"\n' >> drivers/Kconfig
+
+          ls -l drivers/kernelsu/Kconfig
+          tail -2 drivers/Kconfig
+          grep -n kernelsu drivers/Makefile || true
+
+      - name: 移植 xiaomi_touch 触摸框架
+        if: ${{ inputs.enable_xiaomi_touch }}
+        run: |
+          set -euo pipefail
+          cd kernel
+          SRC=../repo/xiaomi_touch
+          for f in Kconfig Makefile xiaomi_touch.c xiaomi_touch.h; do
+            test -f "$SRC/$f" || { echo "[FATAL] 缺少 $SRC/$f"; exit 1; }
+          done
+          mkdir -p drivers/input/touchscreen/xiaomi
+          cp -f "$SRC"/Kconfig "$SRC"/Makefile "$SRC"/xiaomi_touch.c "$SRC"/xiaomi_touch.h \
+                drivers/input/touchscreen/xiaomi/
+          # 注册到上级 Kconfig/Makefile（source 放文件开头，避免 endmenu 位置问题）
+          grep -q 'touchscreen/xiaomi/Kconfig' drivers/input/touchscreen/Kconfig || \
+            sed -i '1i source "drivers/input/touchscreen/xiaomi/Kconfig"' drivers/input/touchscreen/Kconfig
+          grep -q 'touchscreen/xiaomi/' drivers/input/touchscreen/Makefile || \
+            printf '\nobj-y += xiaomi/\n' >> drivers/input/touchscreen/Makefile
+          ls -l drivers/input/touchscreen/xiaomi/
+          grep -n 'xiaomi' drivers/input/touchscreen/Kconfig drivers/input/touchscreen/Makefile
+          echo "[+] xiaomi_touch 已加入源码树"
+
+      - name: 生成配置并注入 KSU 选项
+        run: |
+          set -euo pipefail
+          cd kernel
+          export ARCH=arm64
+          if [ "${{ inputs.config_source }}" = "extracted" ]; then
+            echo "[+] 使用从原厂 boot 提取的完整内核配置"
+            mkdir -p out
+            cp ../repo/configs/polaris_stock_extracted.config out/.config
+            make O=out ARCH=arm64 olddefconfig
+          else
+            make O=out ARCH=arm64 "${{ inputs.defconfig }}"
+          fi
+          # 4.9 的 crc32-arm64.c 依赖 crc 扩展；GCC 9 默认 march 不含，需显式打开
+          if ! grep -q 'CFLAGS_crc32-arm64.o' arch/arm64/crypto/Makefile; then
+            printf '\nCFLAGS_crc32-arm64.o += -march=armv8-a+crc\n' >> arch/arm64/crypto/Makefile
+            echo "[+] 已为 crc32-arm64.o 补 -march=armv8-a+crc"
+          fi
+          # spmi-pmic-arb.c 无条件调用 log_wakeup_reason()，而该声明被隐藏 bool
+          # CONFIG_DEDUCE_WAKEUP_REASONS 包着（olddefconfig 会清掉它），这里直接注释掉调用
+          if [ -f drivers/spmi/spmi-pmic-arb.c ]; then
+            sed -i 's/log_wakeup_reason(irq);/\/* log_wakeup_reason(irq); patched *\//' drivers/spmi/spmi-pmic-arb.c || true
+            { grep -n "log_wakeup_reason" drivers/spmi/spmi-pmic-arb.c || echo "[+] 调用已注释"; }
+          else
+            echo "[+] 无 spmi-pmic-arb.c，跳过"
+          fi
+
+          # utopia 源码预置了 ksu_handle_devpts() 调用，但 SukiSU builtin-new 没实现该入口
+          sed -i 's/ksu_handle_devpts(dentry->d_inode);/\/* ksu_handle_devpts: not provided by SukiSU *\//' fs/devpts/inode.c
+          grep -n "ksu_handle_devpts" fs/devpts/inode.c || echo "[+] devpts hook 已处理"
+
+          # utopia 预置 extern bool ksu_input_hook（某个 KSU 变体的开关），SukiSU 不提供，
+          # 直接把 extern 声明改成定义，初始 false
+          sed -i 's|^extern bool ksu_input_hook __read_mostly;|bool ksu_input_hook __read_mostly = false;|' drivers/input/input.c
+          { grep -n "ksu_input_hook" drivers/input/input.c || echo "[+] 无 KSU input hook（该基线未预置）"; }
+
+          # utopia 预置的是另一套 hook 后端的调用点，与我们启用的 TAMPER_SYSCALL_TABLE 冲突，
+          # 逐个消解（只改调用处，不动 extern 声明，避免语法连锁错误）
+          # tamper 后端下 SukiSU 不编译任何 execve hook，整行换成空语句，保留 if/else 结构
+          sed -i 's/if (unlikely(ksu_execveat_hook))/if (0)/' fs/exec.c
+          sed -i -E 's/^([ \t]*)ksu_handle_execveat(_sucompat)?\([^;]*\);[ \t]*$/\1;/' fs/exec.c
+          sed -n '1698,1704p' fs/exec.c
+          sed -i 's|^[[:space:]]*ksu_handle_faccessat(&dfd, &filename, &mode, NULL);|/* ksu_handle_faccessat: tamper backend */|' fs/open.c
+          sed -i 's|^[[:space:]]*ksu_handle_stat(&dfd, &filename, &flag);|/* ksu_handle_stat: tamper backend */|' fs/stat.c
+          sed -i 's/if (unlikely(ksu_vfs_read_hook))/if (0)/' fs/read_write.c
+          sed -i 's|^[[:space:]]*ksu_handle_vfs_read(&file, &buf, &count, &pos);|/* ksu_handle_vfs_read: removed */|' fs/read_write.c
+          sed -i 's|^[[:space:]]*ksu_handle_input_handle_event(&type, &code, &value);|/* ksu_handle_input_handle_event: removed */|' drivers/input/input.c
+          echo '--- 残留 ksu 调用点 ---'
+          grep -rn "ksu_handle_\|ksu_execveat_hook\|ksu_vfs_read_hook\|ksu_input_hook" fs/exec.c fs/open.c fs/stat.c fs/read_write.c drivers/input/input.c | head -12 || true
+
+          # elliptic(超声) 目录是无条件 obj-y，却依赖未启用的 QDSP6V2，直接停编（有的基线没有 techpack）
+          if [ -f techpack/audio/asoc/Makefile ]; then
+            sed -i 's|^obj-y += elliptic/|# obj-y += elliptic/  (disabled for build)|' techpack/audio/asoc/Makefile
+            echo "[+] elliptic 已停编"
+          else
+            echo "[+] 无 techpack/audio，跳过 elliptic"
+          fi
+          bash ../repo/scripts/ksu_config.sh out/.config \
+            "${{ inputs.enable_tamper }}" "${{ inputs.enable_susfs }}" "${{ inputs.enable_kpm }}" \
+            "${{ inputs.enable_ksu }}"
+          if [ "${{ inputs.enable_xiaomi_touch }}" = "true" ]; then
+            ./scripts/config --file out/.config --enable TOUCHSCREEN_XIAOMI_TOUCHFEATURE || true
+            ./scripts/config --file out/.config --enable TOUCHSCREEN_XIAOMI_TOUCHFEATURE_SENSOR || true
+            ./scripts/config --file out/.config --enable INPUT_TOUCHSCREEN || true
+          fi
+          if [ -n "${{ inputs.localversion }}" ]; then
+            ./scripts/config --file out/.config --set-str LOCALVERSION "${{ inputs.localversion }}"
+            echo "[+] LOCALVERSION=${{ inputs.localversion }}"
+          fi
+          make O=out ARCH=arm64 olddefconfig
+          echo '--- 关键配置 ---'
+          grep -E '^CONFIG_(KSU|KALLSYMS|SECURITY_SELINUX|MODULES)' out/.config || true
+
+      - name: 编译 Image.gz
+        run: |
+          set -uo pipefail
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          echo "--- 工具链诊断 ---"
+          "${CC_OVERRIDE}" --version | head -1
+          "${CROSS}ld" -v 2>&1 | head -1
+          grep -E "CONFIG_(LTO|THINLTO|CFI_CLANG|KSU|KALLSYMS)" out/.config | sort
+          echo "------------------"
+          set +e
+          # 先只编 Image.gz，避免 modules/dtbs 失败把内核目标带崩
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+            LD="${CROSS}ld" ld-name=bfd \
+            HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            -j"$(nproc --all)" Image.gz > /tmp/build.log 2>&1
+          RC=$?
+          # dtb 与模块单独构建，失败只记录不致命
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            -j"$(nproc --all)" dtbs >> /tmp/build.log 2>&1 || true
+          make O=out ARCH=arm64 CROSS_COMPILE="${CROSS}" CC="${CC_OVERRIDE}" \
+            LD="${CROSS}ld" ld-name=bfd HOSTCFLAGS="-O2 -fcommon -std=gnu89" KBUILD_HOSTCFLAGS="-O2 -fcommon -std=gnu89" \
+            -j"$(nproc --all)" modules >> /tmp/build.log 2>&1 || true
+          # modpost 对少数无关 .ko 报错不算失败，只要 Image.gz 产出即可
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            echo "[OK] Image.gz 已生成（make 退出码 $RC，modules 报错可忽略）"
+            RC=0
+          fi
+          set -e
+          echo "make 退出码: $RC"
+          echo "--- 日志尾部 50 行 ---"
+          tail -50 /tmp/build.log
+          if [ "$RC" -ne 0 ]; then
+            echo "=== 错误摘要 ==="
+            { grep -niE "error|错误|undefined reference|No rule to make" /tmp/build.log || true; } | head -60
+            echo "=== make 失败行 ==="
+            { grep -nE "\*\*\*|Error [0-9]" /tmp/build.log || true; } | tail -20
+            cp /tmp/build.log "$GITHUB_WORKSPACE/build.log" || true
+            exit "$RC"
+          fi
+          ls -l out/arch/arm64/boot/
+
+      - name: 收集产物
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp kernel/out/arch/arm64/boot/Image.gz artifacts/ 2>/dev/null || echo "[WARN] 没有 Image.gz"
+          cp kernel/out/arch/arm64/boot/Image artifacts/ 2>/dev/null || true
+          cp kernel/out/.config artifacts/used.config || true
+          cp kernel/out/include/generated/utsrelease.h artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dts/qcom/*.dtb artifacts/ 2>/dev/null || echo "[INFO] 无 dtb 产物"
+          cp /tmp/build.log artifacts/build.log 2>/dev/null || true
+          if [ "${{ inputs.repack_boot }}" = "true" ] && [ -f repo/boot.img ]; then
+            python3 repo/scripts/repack_boot.py --boot repo/boot.img \
+              --image artifacts/Image.gz --out artifacts/boot_sukisu.img
+          else
+            echo "[INFO] 未提供 boot.img，跳过重组；产物为 Image.gz，可用 scripts/repack_boot.py 本地合成"
+          fi
+          cp /tmp/build.log artifacts/build.log 2>/dev/null || true
+          (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-artifacts
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
