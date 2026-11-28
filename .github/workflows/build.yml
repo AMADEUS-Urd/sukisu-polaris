@@ -229,10 +229,10 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel
-          # 提交工作树，使 scripts/setlocalversion 不再追加 "-dirty"/"+"
-          git add -A >/dev/null 2>&1 || true
-          git -c user.name=ci -c user.email=ci@ci commit -q -m "build patches" >/dev/null 2>&1 || true
-          echo "[+] 工作树已提交，UTS_RELEASE 将等于 4.9.186-perf-g83532fd"
+          # 用 .scmversion 让 setlocalversion 输出空，UTS_RELEASE 精确等于
+          # "4.9.186-perf-g83532fd"（不再有 -dirty 的 "+"）
+          touch .scmversion
+          echo "[+] .scmversion 已置空，UTS_RELEASE 将精确对齐"
 
       - name: 生成配置并注入 KSU 选项
         run: |
